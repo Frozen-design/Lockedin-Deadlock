@@ -1,13 +1,10 @@
 # Deadlock avoidance (smokers dilemma)
 import threading
-import math
 import random
 import time
-import collections
 
 POSSIBLE = ["paper", "tobacco", "lighter"]
-RESOURCES = dict(paper = 1, tobacco = 1, lighter = 1)
-TABLE = []
+RESOURCES = dict(paper = 3, tobacco = 3, lighter = 3)
 
 rw_mutex = threading.Semaphore(1)
 mutex = threading.Semaphore(1)
@@ -18,95 +15,156 @@ def atomicPrint(printString):
     print(printString)
     mutex.release()
 
+def createSmokerDict(needList = [0 for x in POSSIBLE]):
+    global POSSIBLE
+    desire = dict()
+    for i, j  in zip(POSSIBLE, needList):
+        desire[i] = j
+    return desire
+
+def isTrue(trueList, num = -1):
+    if num <= 0:
+        num = len(trueList)
+    numTrue = 0
+    for i in trueList:
+        if i:
+            numTrue += 1
+    return numTrue >= num
+
 class Smoker:
     def __init__(self, name, resource):
-        global POSSIBLE, STATUS, TABLE, rw_mutex
+        global POSSIBLE, TABLE, rw_mutex
         self.name = name
         self.resource = resource
-        self.resourceCount = self.acquireAllResources(self.resource)
-        self.desire = POSSIBLE.copy().remove(self.resource)
         self.status = "waiting"
+        self.timesSmoked = 0
+
+        self.allocated = createSmokerDict([0 for x in POSSIBLE])
+        self.acquireAllResources(self.resource)
+
+        self.need = createSmokerDict([1 if x != self.resource else 0 for x in POSSIBLE])
+        self.needTotal = createSmokerDict([1 for x in POSSIBLE])
 
     def acquireAllResources(self, need):
         global RESOURCES
-        count = RESOURCES[need]
+        if RESOURCES[need] <= 0:
+            return
+        self.allocated[need] = RESOURCES[need]
         RESOURCES[need] = 0
-        return count
     
     def acquireNResources(self, need, value):
-        rw_mutex.acquire()
         global RESOURCES
-        count = RESOURCES[need]
-        RESOURCES[need] = 0
-        rw_mutex.release()
-        return count
+        if RESOURCES[need] <= 0:
+            return
+        self.allocated[need] += value
+        RESOURCES[need] -= value
+
+    def releaseNResources(self, release, value):
+        global RESOURCES
+        if self.allocated[release] <= 0 or self.allocated[release] < value:
+            return
+        if self.status == "smoking" and self.allocated[release] <= self.needTotal[release]:
+            return
+        self.allocated[release] -= value
+        RESOURCES[release] += value
 
     def checkAvailableResources(self):
-        global POSSIBLE, TABLE, rw_mutex
+        global POSSIBLE, RESOURCES, rw_mutex
         self.status = "checking"
-        while self.status != "acquired":
-            atomicPrint(time.ctime(), ">", self.name, "is checking. I have", self.resource, "I need", self.desire)
-            if collections.Counter(TABLE) == collections.Counter(self.desire) and self.resourceCount > 0:
-                self.status = "acquired"
-            #Simulate time taken to check materials
-            time.sleep(2)
 
-    def grabRequiredResources(self):
-        global POSSIBLE, TABLE, rw_mutex
-        if self.status == "acquired":
+        while self.status != "smoked":
             rw_mutex.acquire()
+            atomicPrint(f"{time.ctime()} > {self.name} is checking. I have {self.allocated}. I need {self.need}")
+            someIter = [a[0] == b[0] == c[0] and (a[1] + b[1]) >= c[1] for a, b, c in zip(RESOURCES.items(), self.allocated.items(), self.needTotal.items())]
+
+            if isTrue(someIter):
+                self.status = "smoking"
+
+                #Acquire necessary resources
+                self.acquireAllResources(self.resource)
+                self.manageResources(self.acquireNResources)
+                atomicPrint(f"{time.ctime()} >> I have {self.allocated}. {self.name} is smoking")
+                rw_mutex.release()
+
+                #Time to smoke.
+                time.sleep(5)
+
+                #Release resources
+                rw_mutex.acquire()
+                self.status = "smoked"
+                self.timesSmoked += 1
+                atomicPrint(f"{time.ctime()} >> {self.name} has finished smoking. Releasing: {self.need}")
+                self.manageResources(self.releaseNResources)
+                rw_mutex.release()
+
+                #Exit checking loop
+            else:
+                self.status = "cannot acquire"
+                rw_mutex.release()
+                #time to check
+            time.sleep(1)
+
+        while self.timesSmoked < 1:
+            self.checkAvailableResources()
             
-            self.status = "smoking"
-            atomicPrint(time.ctime(), ">>", self.name, "is smoking")
-            for i in self.desire:
-                TABLE.remove(self.desire[i])
-
-            rw_mutex.release()
-
-            #Simulate time taken to smoke.
-            time.sleep(10)
-            self.status = "waiting"
-
-    def trySmoking(self):
-        self.checkAvailableResources()
-        self.grabRequiredResources()
-
-
+    def manageResources(self, func):
+        global POSSIBLE, RESOURCES, rw_mutex
+        for i in self.need.items():
+            func(i[0], i[1])
 
 class Dealer:
-    def __init__(self):
-        pass
+    def __init__(self, *smokers):
+        self.smokers = list(smokers)
 
-    def dealResources(self):
-        global POSSIBLE, TABLE, rw_mutex, mutex
-        i_loop = 0
-        while i_loop <= 10:
-            if len(TABLE) == 0: 
-                rw_mutex.acquire()
+    def addSmoker(self, smoker):
+        self.smokers.append(smoker)
+    
+    def checkForDeadlock(self):
+        global rw_mutex
+        while True:
+            rw_mutex.acquire()
+            cannotAcquireList = [a.status == "cannot acquire" for a in self.smokers]
+            smokedList = [a.status == "smoked" for a in self.smokers]
+            if isTrue(smokedList):
+                atomicPrint("Everyone finished smoking!")
+                break
 
-                TABLE = random.sample(POSSIBLE, 2)
-                atomicPrint(time.ctime(), "These are the dealt resources:", TABLE)
+            if isTrue(cannotAcquireList, num = 1):
+                # Update which smokers cannot acquire their resources
+                cannotAcquireList = [a.status == "cannot acquire" for a in self.smokers]
+                deadlockedSmokers = [b for a, b in zip(cannotAcquireList, self.smokers) if a]
 
-                rw_mutex.release()
-            time.sleep(4)
-            i_loop += 1
+                atomicPrint(f"{time.ctime()} >>> DEADLOCK")
+
+                randomSmoker = random.choice(deadlockedSmokers)
+                needOfSmoker = randomSmoker.need
+
+                for j in self.smokers:
+                    for i in needOfSmoker.items():
+                        j.releaseNResources(i[0], i[1])
+                
+                atomicPrint(f"{time.ctime()} >>> Resources placed on table: {RESOURCES}")
+
+            rw_mutex.release()
+            time.sleep(2)
             
         
 
 
 def main():
-    global POSSIBLE, TABLE, rw_mutex
+    global POSSIBLE, RESOURCES, rw_mutex
+    random.seed()
+    startTime = time.time()
+    smoker1 = Smoker("Uno", POSSIBLE[0])
+    smoker2 = Smoker("Dos", POSSIBLE[1])
+    smoker3 = Smoker("Tres", POSSIBLE[2])
+    dealer1 = Dealer(smoker1, smoker2, smoker3)
 
-    smoker1 = Smoker("Uno", POSSIBLE[0], 1)
-    smoker2 = Smoker("Dos", POSSIBLE[1], 1)
-    smoker3 = Smoker("Tres", POSSIBLE[2], 1)
-    dealer1 = Dealer()
-
-    t1 = threading.Thread(target = smoker1.trySmoking)
-    t2 = threading.Thread(target = smoker2.trySmoking)
-    t3 = threading.Thread(target = smoker3.trySmoking)
-    t4 = threading.Thread(target = dealer1.dealResources)
-    threads = [t4, t1, t2, t3]
+    t1 = threading.Thread(target = smoker1.checkAvailableResources)
+    t2 = threading.Thread(target = smoker2.checkAvailableResources)
+    t3 = threading.Thread(target = smoker3.checkAvailableResources)
+    t4 = threading.Thread(target = dealer1.checkForDeadlock)
+    threads = [t1, t2, t3, t4]
 
     for i in threads:
         i.start()
@@ -114,7 +172,7 @@ def main():
     for i in threads:
         i.join()
 
-    return
+    print(f"Time taken: {time.time() - startTime}")
 
 if __name__ == "__main__":
     main()
