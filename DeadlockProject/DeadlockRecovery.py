@@ -76,9 +76,6 @@ class Process:
     def check(self):
         updateLock.acquire()
 
-        # Update what resources need to be requested
-        self.request = DABV0(DSD(self.require, self.allocated))
-
         with printLock:
             print(self.name, "checking\n Resources:", RESOURCES, "\n Required:", self.require, "\n Reserved:", self.reserve, "\n Allocated:", self.allocated, "\n Requested:", self.request, "\n")
 
@@ -133,7 +130,6 @@ class Monitor:
 
             for j in self.processList:
                 j.acquireN(j.resource, RESOURCES[j.resource])
-                j.request = DABV0(DSD(j.require, j.allocated))
 
             with printLock:
                 print("Monitor checking")
