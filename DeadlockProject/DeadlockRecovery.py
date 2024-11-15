@@ -9,12 +9,18 @@ DSD   = lambda x, y: dict([(a[0], a[1] - b[1]) for a, b in zip(x.items(), y.item
 DAD   = lambda x, y: dict([(a[0], a[1] + b[1]) for a, b in zip(x.items(), y.items())])
 DABV0 = lambda x   : dict([(a[0], a[1]) if a[1] >= 0 else (a[0], 0) for a in x.items()])
 
-
 RESOURCELIST = ["Guns", "Bullets", "Targets"]
-RESOURCES = L2D(RESOURCELIST, [1 for x in RESOURCELIST])
+RESOURCES = L2D(RESOURCELIST, [3 for x in RESOURCELIST])
 
 printLock = threading.Lock()
 updateLock = threading.Semaphore()
+
+def allTrue(list1):
+    count1 = 0
+    for i in list1:
+        if i:
+            count1 += 1
+    return count1 == len(list1)
 
 def waitPeriod(a: int):
     updateLock.release()
@@ -50,20 +56,22 @@ class Process:
     
     def run(self):
 
-        if self.allocated == self.require:
+        testIfGreaterThan = [a[0] == b[0] and a[1] >= b[1] for a, b in zip(self.allocated, self.require)]
+
+        if allTrue(testIfGreaterThan):
 
             # Move to reserve
             for i in RESOURCELIST:
                 self.reserve[i] += self.require[i]
                 self.allocated[i] -= self.require[i]
+
+            # Decrease the Number of times that the process needs to run in order to complete.
+            self.timesRun -= 1
             
             with printLock:
-                print(self.name, "running\n Resources:", RESOURCES, "\n Required:", self.require, "\n Reserved:", self.reserve, "\n Allocated:", self.allocated, "\n Requested:", self.request)
+                print(self.name, "is running\n Resources:", RESOURCES, "\n Required:", self.require, "\n Reserved:", self.reserve, "\n Allocated:", self.allocated, "\n Requested:", self.request, "\n")
 
             waitPeriod(3)
-            
-            with printLock:
-                print(self.name, "is done running")
 
             #Move out of reserve
             for i in RESOURCELIST:
@@ -71,7 +79,7 @@ class Process:
                 self.allocated[i] += self.require[i]
             
             with printLock:
-                print(self.name, "is finished\n Resources:", RESOURCES, "\n Required:", self.require, "\n Reserved:", self.reserve, "\n Allocated:", self.allocated, "\n Requested:", self.request)
+                print(self.name, "is finished\n Resources:", RESOURCES, "\n Required:", self.require, "\n Reserved:", self.reserve, "\n Allocated:", self.allocated, "\n Requested:", self.request, "\n")
     
     def check(self):
         updateLock.acquire()
@@ -80,9 +88,6 @@ class Process:
             print(self.name, "checking\n Resources:", RESOURCES, "\n Required:", self.require, "\n Reserved:", self.reserve, "\n Allocated:", self.allocated, "\n Requested:", self.request, "\n")
 
         if RESOURCES == self.request:
-            with printLock:
-                print(self.name, "started running")
-            
             # Acquire all needed resources
             for i in RESOURCELIST:
                 self.acquireN(i, self.request[i])
@@ -94,9 +99,6 @@ class Process:
             # Release resources into the ether
             for i in RESOURCELIST:
                 self.releaseN(i, self.request[i])
-
-            # Decrease the Number of times that the process needs to run in order to complete.
-            self.timesRun -= 1
 
             # Cooldown period after everything
             waitPeriod(5)
@@ -111,18 +113,21 @@ class Process:
 class Monitor:
     def __init__(self, *processList):
         self.processList = list(processList)
-        self.maxResources = L2D(RESOURCELIST, [1 for x in RESOURCELIST])
+        self.maxResources = L2D(RESOURCELIST, [3 for x in RESOURCELIST])
         print(self.maxResources)
         pass
 
     def check(self):
-        time.sleep(2)
 
         a = sum([a.timesRun for a in self.processList])
         while a > 0:
+            time.sleep(2)
+            
             updateLock.acquire()
+            
             a = sum([a.timesRun for a in self.processList])
             if a == 0:
+                updateLock.release()
                 return
 
             with printLock:
@@ -135,17 +140,13 @@ class Monitor:
                 print("Monitor checking")
                 print(RESOURCES)
 
-            if a == 0:
-                return
-
             savedResources = RESOURCES.copy()
             for i in self.processList:
                 savedResources = DAD(savedResources, i.allocated)
             
-            for i in savedResources.items():
-                if i[1] < 1:
+            for i in savedResources.values():
+                if i < 1:
                     updateLock.release()
-                    time.sleep(1)
                     continue
 
             updateLock.release()
@@ -153,6 +154,7 @@ class Monitor:
 
             isDeadlocked = not self.graphTheory()
             if isDeadlocked:
+
                 with printLock:
                     print("Deadlocked: True")
 
@@ -168,9 +170,7 @@ class Monitor:
                         i.releaseN(j[0], j[1])
                 
                 with printLock:
-                    print(RESOURCES, randomProcess.name)
-
-            waitPeriod(2)
+                    print(RESOURCES, randomProcess.name, "\n")
 
             updateLock.release()
 
