@@ -9,7 +9,6 @@ RESOURCES = []
 
 rw_mutex = threading.Semaphore(1)
 mutex = threading.Semaphore(1)
-read_count = 0
 
 
 class Smoker:
@@ -22,9 +21,6 @@ class Smoker:
         global POSSIBLE, RESOURCES, rw_mutex, mutex, read_count
         
         mutex.acquire()
-        """if read_count < 1:
-            rw_mutex.acquire()
-        read_count += 1"""
         print(time.ctime(), ">", self.name, "is checking. I have", self.resource)
         mutex.release()
         
@@ -34,14 +30,6 @@ class Smoker:
 
         if len(RESOURCES) == 0:
             self.confirm = False
-        
-        
-
-        """mutex.acquire()
-        read_count -= 1
-        if read_count < 1:
-            rw_mutex.release()
-        mutex.release()"""
 
     def grabRequiredResources(self):
         global POSSIBLE, RESOURCES, rw_mutex, mutex, read_count
@@ -52,23 +40,28 @@ class Smoker:
             mutex.release()
             RESOURCES = []
             rw_mutex.release()
+
             time.sleep(9)
         else:
             self.confirm = True
 
     def trySmoking(self):
-        while True:
+        i_loop = 0
+        while i_loop <= 10:
             self.checkAvailableResources()
             self.grabRequiredResources()
+            i_loop += 1
             time.sleep(2)
-    
+
+
 class Dealer:
     def __init__(self):
         pass
 
     def dealResources(self):
         global POSSIBLE, RESOURCES, rw_mutex, mutex, read_count
-        while True:
+        i_loop = 0
+        while i_loop <= 10:
             if len(RESOURCES) == 0: 
                 rw_mutex.acquire()
                 RESOURCES = random.sample(POSSIBLE, 2)
@@ -77,6 +70,8 @@ class Dealer:
                 mutex.release()
                 rw_mutex.release()
             time.sleep(4)
+            i_loop += 1
+            
         
 
 
